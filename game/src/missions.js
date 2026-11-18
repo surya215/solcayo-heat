@@ -1,6 +1,6 @@
-// Selene's story: six jobs that take Jax from a driver fresh off the ferry to
-// the man who owns Solcayo. Each mission is a list of stages; the world checks
-// the stage's condition every step and advances or pays out.
+// Selene's story: six jobs that take Jax from a driver fresh off the
+// ferry to the man who owns Solcayo. Each mission is a list of stages; the
+// world checks the stage's condition every step and advances or pays out.
 export const MISSIONS = [
   {
     title: 'Pulang ke Solcayo',
@@ -60,10 +60,11 @@ export function startMission(state, index, api) {
   enterStage(state, api);
 }
 
+// Run a stage's one-time setup when the player reaches it.
 export function enterStage(state, api) {
   const stage = state.mission.def.stages[state.mission.stage];
-  state.mission.channel = 0;
   if (!stage) return;
+  state.mission.channel = 0;
   if (stage.onStart === 'hot') api.crime(2, 'Paket panas ketahuan!');
   if (stage.onStart === 'hot4') api.crime(4, 'El Tiburón tumbang — polisi mengepung!');
   if (stage.type === 'chase' || stage.type === 'destroy') api.spawnTargetCar(state);
@@ -76,34 +77,30 @@ export function objectiveText(state) {
   return stage ? stage.text : '';
 }
 
+// Where the HUD beacon and the minimap dot point right now.
 export function missionTarget(state) {
   if (!state.mission) return null;
   const stage = state.mission.def.stages[state.mission.stage];
   if (!stage) return null;
-  if (stage.type === 'chase' || stage.type === 'destroy') {
+  if (stage.type === 'chase' || stage.type === 'destroy' || stage.type === 'grab') {
     const car = state.mission.targetCar;
-    return car ? { x: car.x, y: car.y, r: 40 } : null;
-  }
-  if (stage.type === 'grab') {
-    const car = state.mission.targetCar;
-    return car ? { x: car.x, y: car.y, r: stage.r } : null;
+    return car ? { x: car.x, y: car.y, r: stage.type === 'grab' ? stage.r : 40 } : null;
   }
   if (stage.type === 'kill') return { x: stage.x, y: stage.y, r: stage.r };
   return { x: stage.x, y: stage.y, r: stage.r };
 }
 
-function completeStage(state, api) {
+function advanceStage(state, api) {
   state.mission.stage += 1;
-  if (state.mission.stage >= state.mission.def.stages.length) {
-    completeMission(state, api);
-  } else {
+  if (state.mission.stage >= state.mission.def.stages.length) finishMission(state, api);
+  else {
     const stage = state.mission.def.stages[state.mission.stage];
     state.banner = { text: 'Lanjut!', sub: stage.text, t: 2.5 };
     enterStage(state, api);
   }
 }
 
-function completeMission(state, api) {
+function finishMission(state, api) {
   const def = state.mission.def;
   state.money += def.reward;
   state.completedMissions = Math.max(state.completedMissions, state.mission.index + 1);
@@ -117,7 +114,7 @@ function completeMission(state, api) {
   api.save();
 }
 
-/** Advance the mission state machine; called every step from the world. */
+// Advance the mission state machine; called every step from the world.
 export function updateMission(state, dt, api) {
   const m = state.mission;
   if (!m) return;
@@ -125,12 +122,13 @@ export function updateMission(state, dt, api) {
   if (!stage) return;
   const p = state.player;
   const dist = stage.x !== undefined ? Math.hypot(p.x - stage.x, p.y - stage.y) : Infinity;
+
   if (stage.type === 'goto') {
-    if (dist < stage.r) completeStage(state, api);
+    if (dist < stage.r) advanceStage(state, api);
   } else if (stage.type === 'interact') {
     if (dist < stage.r && state.interactHeld) {
       m.channel += dt;
-      if (m.channel >= stage.channel) completeStage(state, api);
+      if (m.channel >= stage.channel) advanceStage(state, api);
     } else {
       m.channel = Math.max(0, m.channel - dt * 2);
     }
@@ -139,18 +137,16 @@ export function updateMission(state, dt, api) {
     if (car && car.health <= 0) {
       car.speed = 0;
       car.dead = true;
-      if (stage.type === 'destroy') completeStage(state, api);
+      if (stage.type === 'destroy') advanceStage(state, api);
       else {
         state.banner = { text: 'Kurir berhenti!', sub: 'Ambil tasnya.', t: 2.5 };
-        completeStage(state, api);
+        advanceStage(state, api);
       }
     }
   } else if (stage.type === 'grab') {
     const car = m.targetCar;
-    if (car && Math.hypot(p.x - car.x, p.y - car.y) < stage.r) {
-      completeStage(state, api);
-    }
+    if (car && Math.hypot(p.x - car.x, p.y - car.y) < stage.r) advanceStage(state, api);
   } else if (stage.type === 'kill') {
-    if (state.enemies.length === 0 && m.spawned >= stage.count) completeStage(state, api);
+    if (state.enemies.length === 0 && m.spawned >= stage.count) advanceStage(state, api);
   }
 }

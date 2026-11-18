@@ -1,6 +1,6 @@
-// Traffic cars that follow Solcayo's roads, and pedestrians who walk its
-// sidewalks and run from trouble. Both spawn near the player and despawn far
-// away, so the city always feels alive around the camera.
+// Traffic cars that follow Solcayo's roads, and pedestrians who walk the
+// sidewalks and run from trouble. Both spawn near the player and despawn
+// far away, so the city always feels alive around the camera.
 import { TRAFFIC, PEDS, WORLD } from './config.js';
 import { AVENUES, STREETS, isOnRoad, nearestRoadPoint, randomRoadPoint, sidewalkPoint, buildingAt } from './city.js';
 import { pick, range } from './random.js';
@@ -8,7 +8,8 @@ import { pick, range } from './random.js';
 const CAR_COLORS = ['#d94f3d', '#3d7bd9', '#e8c53a', '#7ac74f', '#e8e8e8', '#2b2f38', '#c96fd0', '#e8912d', '#4fc3c3'];
 const PED_COLORS = ['#e8b04b', '#7a5fd0', '#4fae62', '#d06f8a', '#5f8fd0', '#c2c2c2', '#e07b39'];
 
-/** The road axis a point sits on: avenue → north/south, street → east/west. */
+// Which way a point on the road faces: an avenue runs north/south, a
+// street east/west; at a crossing either is fine.
 export function roadAxis(random, x, y) {
   const onAvenue = AVENUES.some((ax) => Math.abs(x - ax) < 2);
   const onStreet = STREETS.some((sy) => Math.abs(y - sy) < 2);
@@ -19,9 +20,9 @@ export function roadAxis(random, x, y) {
 }
 
 export function makeCar(random, x, y, angle, opts = {}) {
-  // The car's axis follows the road it sits on: an avenue means it faces
-  // north/south, a street means east/west. A random axis would point it
-  // across a block, straight into buildings.
+  // A car faces along the road it sits on: an avenue means north/south, a
+  // street east/west. A random facing would point it across a block,
+  // straight into the buildings.
   const derived = roadAxis(random, x, y);
   const axis = opts.axis ?? derived.axis;
   const dir = opts.dir ?? derived.dir;
@@ -39,16 +40,18 @@ export function makeCar(random, x, y, angle, opts = {}) {
   };
 }
 
-function nextIntersection(car) {
+// The next crossing ahead of a car on its own axis, or null at the edge.
+function nextCrossing(car) {
   if (car.axis === 'x') {
-    const xs = STREETS.filter((sy) => (car.dir > 0 ? sy > car.y + 4 : sy < car.y - 4));
-    return xs.length ? (car.dir > 0 ? Math.min(...xs) : Math.max(...xs)) : null;
+    const ahead = STREETS.filter((sy) => (car.dir > 0 ? sy > car.y + 4 : sy < car.y - 4));
+    return ahead.length ? (car.dir > 0 ? Math.min(...ahead) : Math.max(...ahead)) : null;
   }
-  const ys = AVENUES.filter((ax) => (car.dir > 0 ? ax > car.x + 4 : ax < car.x - 4));
-  return ys.length ? (car.dir > 0 ? Math.min(...ys) : Math.max(...ys)) : null;
+  const ahead = AVENUES.filter((ax) => (car.dir > 0 ? ax > car.x + 4 : ax < car.x - 4));
+  return ahead.length ? (car.dir > 0 ? Math.min(...ahead) : Math.max(...ahead)) : null;
 }
 
-function carAhead(cars, car, dist) {
+// Is another car directly ahead within `dist`?
+function blockedAhead(cars, car, dist) {
   const dx = Math.cos(car.angle);
   const dy = Math.sin(car.angle);
   for (const o of cars) {
@@ -62,19 +65,24 @@ function carAhead(cars, car, dist) {
   return false;
 }
 
-export function stepTrafficCar(car, cars, dt, random, city) {
-  const prevX = car.x;
-  const prevY = car.y;
-  const targetAngle = car.axis === 'x' ? (car.dir > 0 ? 0 : Math.PI) : (car.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
+function clampTurn(car, targetAngle, dt) {
   let da = targetAngle - car.angle;
   while (da > Math.PI) da -= Math.PI * 2;
   while (da < -Math.PI) da += Math.PI * 2;
   car.angle += Math.max(-3 * dt, Math.min(3 * dt, da));
-  const want = carAhead(cars, car, 70) ? 0 : car.targetSpeed;
+  return da;
+}
+
+export function stepTrafficCar(car, cars, dt, random, city) {
+  const prevX = car.x;
+  const prevY = car.y;
+  const targetAngle = car.axis === 'x' ? (car.dir > 0 ? 0 : Math.PI) : (car.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
+  const da = clampTurn(car, targetAngle, dt);
+  const want = blockedAhead(cars, car, 70) ? 0 : car.targetSpeed;
   car.speed += Math.max(-260 * dt, Math.min(160 * dt, want - car.speed));
   car.x += Math.cos(car.angle) * car.speed * dt;
   car.y += Math.sin(car.angle) * car.speed * dt;
-  // Lane offset: keep to the right side of the road.
+  // Keep to the right side of the road.
   const lane = car.lane * 18;
   if (car.axis === 'x') {
     const wantY = nearestRoadPoint(car.x, car.y).y + lane;
@@ -83,22 +91,23 @@ export function stepTrafficCar(car, cars, dt, random, city) {
     const wantX = nearestRoadPoint(car.x, car.y).x + lane;
     car.x += Math.max(-60 * dt, Math.min(60 * dt, wantX - car.x));
   }
+  // Turn around at the map edge instead of driving off it.
   if (car.x < 30 || car.x > WORLD.width - 30 || car.y < 30 || car.y > WORLD.height - 140) {
     car.dir *= -1;
     car.x = Math.max(40, Math.min(WORLD.width - 40, car.x));
     car.y = Math.max(40, Math.min(WORLD.height - 150, car.y));
   }
-  // Never end up inside a building: a shove from the player's car can push
-  // a traffic car off the road, and it must slide back, not drive through.
+  // A shove from the player's car can push a traffic car off the road;
+  // it slides back instead of driving through a building.
   if (city && buildingAt(city, car.x, car.y, 13)) {
     car.x = prevX;
     car.y = prevY;
   }
-  const inter = nextIntersection(car);
-  if (inter !== null) {
-    const dist = car.axis === 'x' ? Math.abs(inter - car.y) : Math.abs(inter - car.x);
+  // At a crossing, sometimes turn onto the other road, sometimes U-turn.
+  const cross = nextCrossing(car);
+  if (cross !== null) {
+    const dist = car.axis === 'x' ? Math.abs(cross - car.y) : Math.abs(cross - car.x);
     if (dist < 26 && Math.abs(da) < 0.2) {
-      // At an intersection: sometimes turn onto the crossing road.
       if (random() < 0.45) {
         car.axis = car.axis === 'x' ? 'y' : 'x';
         car.dir = random() < 0.5 ? 1 : -1;
@@ -128,10 +137,10 @@ export function createTraffic(random, city, px, py) {
   return { cars, peds };
 }
 
+// Move anything too far from the player back to a road nearby.
 export function respawnTraffic(traffic, random, px, py) {
   for (const car of traffic.cars) {
-    const d = Math.hypot(car.x - px, car.y - py);
-    if (d > TRAFFIC.despawnRadius) {
+    if (Math.hypot(car.x - px, car.y - py) > TRAFFIC.despawnRadius) {
       const p = randomRoadPoint(random, px, py, TRAFFIC.spawnRadius);
       car.x = p.x; car.y = p.y; car.speed = 0;
       const derived = roadAxis(random, p.x, p.y);
@@ -141,8 +150,7 @@ export function respawnTraffic(traffic, random, px, py) {
     }
   }
   for (const ped of traffic.peds) {
-    const d = Math.hypot(ped.x - px, ped.y - py);
-    if (d > TRAFFIC.despawnRadius) {
+    if (Math.hypot(ped.x - px, ped.y - py) > TRAFFIC.despawnRadius) {
       const p = sidewalkPoint(random, px, py, TRAFFIC.spawnRadius);
       ped.x = p.x; ped.y = p.y; ped.flee = 0;
     }

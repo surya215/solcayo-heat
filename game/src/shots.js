@@ -1,14 +1,15 @@
-// The screenshot scenes behind ?shot=start|drive|chase|mission. Each one plays
-// the real rules forward from a fresh world for a fixed number of seconds,
-// steered by a simple autopilot, so the frame is what real play looks like
-// and the same seed always gives the same frame.
+// The screenshot scenes behind ?shot=start|drive|chase|mission. Each one
+// plays the real rules forward from a fresh world for a fixed number of
+// seconds, steered by a simple autopilot, so the frame is what real play
+// looks like — and the same seed always gives the same frame.
 import { STEP } from './config.js';
 import { AVENUES, STREETS } from './city.js';
 import { startMission } from './missions.js';
 import { missionApi } from './world.js';
 import { SCREEN_TITLE, SCREEN_PLAY } from './render.js';
 
-const noopAudio = {
+// A silent stand-in for the audio system: staging runs without sound.
+const silentAudio = {
   shot() {}, enemyShot() {}, crash() {}, pickup() {}, mission() {}, busted() {},
   setEngine() {}, setSiren() {}, toggleMute() {}, unlock() {},
 };
@@ -24,25 +25,23 @@ function fakeInput() {
   };
 }
 
-/**
- * A road-following driver for the screenshot scenes: it hops from one
- * intersection to the next, always along a road, steering at the far target
- * so small drifts correct themselves instead of swinging the car around.
- */
+// A road-following driver for the staged scenes: it hops from one
+// intersection to the next, always along a road, steering at a near target
+// so small drifts correct themselves instead of swinging the car around.
 export function makeRoadDriver(state) {
   let target = null;
   let prev = null;
-  // The car only ever heads for an intersection next to the one it is at:
-  // steering straight at a far intersection cuts diagonally across blocks
-  // and wedges the car against a building.
-  function nearestIntersection(x, y) {
+  let stuck = 0;
+
+  function nearestCrossing(x, y) {
     const ax = AVENUES.reduce((a, b) => (Math.abs(b - x) < Math.abs(a - x) ? b : a));
     const sy = STREETS.reduce((a, b) => (Math.abs(b - y) < Math.abs(a - y) ? b : a));
     return { x: ax, y: sy };
   }
+
   function pickTarget() {
     const c = state.player.car;
-    const cur = nearestIntersection(c.x, c.y);
+    const cur = nearestCrossing(c.x, c.y);
     const cands = [];
     for (const ax of AVENUES) {
       if (Math.abs(ax - cur.x) === 320) cands.push({ x: ax, y: cur.y });
@@ -50,17 +49,27 @@ export function makeRoadDriver(state) {
     for (const sy of STREETS) {
       if (Math.abs(sy - cur.y) === 320) cands.push({ x: cur.x, y: sy });
     }
+    // Never drive straight back to the crossing we just left.
     const fresh = cands.filter((n) => !(prev && n.x === prev.x && n.y === prev.y));
     const pool = fresh.length > 0 ? fresh : cands;
     // Prefer the neighbour most aligned with the heading, so the car runs
-    // straight down roads and only turns when the grid forces it to.
+    // straight down roads and only turns when the grid forces it to. Break
+    // near-ties toward the map centre, so a long staged drive stays in the
+    // busy middle of the city instead of drifting to an edge.
     const dx = Math.cos(c.angle);
     const dy = Math.sin(c.angle);
-    pool.sort((a, b) => ((b.x - cur.x) * dx + (b.y - cur.y) * dy) - ((a.x - cur.x) * dx + (a.y - cur.y) * dy));
+    const cx = 1280;
+    const cy = 960;
+    const centerOf = (n) => Math.hypot(n.x - cx, n.y - cy);
+    pool.sort((a, b) => {
+      const scoreA = ((a.x - cur.x) * dx + (a.y - cur.y) * dy) - 1.2 * (centerOf(a) - centerOf(cur));
+      const scoreB = ((b.x - cur.x) * dx + (b.y - cur.y) * dy) - 1.2 * (centerOf(b) - centerOf(cur));
+      return scoreB - scoreA;
+    });
     prev = cur;
     return pool[0] ?? cur;
   }
-  let stuck = 0;
+
   return {
     steer() {
       const c = state.player.car;
@@ -72,18 +81,15 @@ export function makeRoadDriver(state) {
       while (da < -Math.PI) da += Math.PI * 2;
       const steerX = da > 0.12 ? 1 : da < -0.12 ? -1 : 0;
       const distToTarget = Math.hypot(target.x - c.x, target.y - c.y);
-      // Arrive at each intersection slow enough to turn: at 560 the car
-      // needs 250 units to stop, but the next target is only picked 90 out,
-      // so it overshoots the corner and wedges off-road.
+      // Arrive at each crossing slow enough to turn: at top speed the car
+      // needs 250 units to stop, but the next target is picked 90 out, so
+      // it would overshoot the corner and wedge off-road.
       if (distToTarget < 160 && c.speed > 180) return { x: steerX, y: 1 };
       // Cruise at ~300 on a straight road, not at the 560 top speed.
       if (Math.abs(da) <= 0.35 && c.speed > 300) return { x: steerX, y: 0 };
-      // Slow for turns early: at 560 the turning circle is far wider than a
-      // 72-wide road, so the car overshoots the intersection, leaves the road
-      // and wedges against a building. Brake progressively as the turn
-      // sharpens. But braking at crawling speed becomes reversing, and a car
-      // that reverses into a building never turns at all — so below 80, drive
-      // forward through the turn instead; the car swings round as it moves.
+      // Brake progressively as a turn sharpens. But braking at crawling
+      // speed becomes reversing, and a car that reverses into a building
+      // never turns at all — so below 80, drive forward through the turn.
       if (Math.abs(da) > 0.35 && c.speed > 200) return { x: steerX, y: 1 };
       if (Math.abs(da) > 0.8 && c.speed > 120) return { x: steerX, y: 1 };
       if (Math.abs(da) > 1.2 && c.speed > 80) return { x: steerX, y: 1 };
@@ -109,9 +115,9 @@ export function makeRoadDriver(state) {
         if (c.speed > (leader.speed ?? 0) + 30) return { x: steerX, y: 1 };
         return { x: steerX, y: -1 };
       }
-      // Crawling for 3 s with a clear road means wedged against a building:
-      // back out the way the car came in, steering so the nose swings round
-      // toward the target (in reverse the steering sign flips).
+      // Crawling for 3 s with a clear road means wedged against a
+      // building: back out the way the car came in, steering so the nose
+      // swings round toward the target (in reverse the steering flips).
       if (Math.abs(c.speed) < 25) stuck += 1;
       else stuck = 0;
       if (stuck > 180) {
@@ -141,12 +147,19 @@ function putPlayerInCar(state) {
   state.camera.y = car.y;
 }
 
+// A staged scene is a photograph, not a playthrough: if the autopilot got
+// busted or wasted during staging, the frame must still show the scene.
+function clearEndScreen(state) {
+  state.endScreen = null;
+  state.bustTimer = 0;
+}
+
 export function stageShot(name, world, stepWorld) {
   const state = world;
   const input = fakeInput();
   if (name === 'start') {
     state.time = (18.4 - 17.6) * 90; // sunset
-    for (let i = 0; i < 5 / STEP; i += 1) stepWorld(state, input, STEP, noopAudio, 0);
+    for (let i = 0; i < 5 / STEP; i += 1) stepWorld(state, input, STEP, silentAudio, 0);
     state.camera.x = 1120;
     state.camera.y = 1120;
     return { screen: SCREEN_TITLE, best: { completedMissions: 0, money: 150, stats: { carsStolen: 0 } } };
@@ -157,7 +170,7 @@ export function stageShot(name, world, stepWorld) {
     const driver = makeRoadDriver(state);
     for (let i = 0; i < 16 / STEP; i += 1) {
       input.direction = () => driver.steer();
-      stepWorld(state, input, STEP, noopAudio, 0);
+      stepWorld(state, input, STEP, silentAudio, 0);
     }
     clearEndScreen(state);
     return { screen: SCREEN_PLAY, best: null };
@@ -174,7 +187,7 @@ export function stageShot(name, world, stepWorld) {
     const driver = makeRoadDriver(state);
     for (let i = 0; i < 11 / STEP; i += 1) {
       input.direction = () => driver.steer();
-      stepWorld(state, input, STEP, noopAudio, 0);
+      stepWorld(state, input, STEP, silentAudio, 0);
     }
     clearEndScreen(state);
     return { screen: SCREEN_PLAY, best: null };
@@ -188,7 +201,7 @@ export function stageShot(name, world, stepWorld) {
   state.player.ammo = 120;
   state.camera.x = state.player.x;
   state.camera.y = state.player.y;
-  startMission(state, 4, missionApi(state, noopAudio));
+  startMission(state, 4, missionApi(state, silentAudio));
   for (let i = 0; i < 2.5 / STEP; i += 1) {
     const target = state.enemies[0];
     if (target) {
@@ -199,17 +212,8 @@ export function stageShot(name, world, stepWorld) {
     } else {
       input.mouseDown = false;
     }
-    stepWorld(state, input, STEP, noopAudio, 0);
+    stepWorld(state, input, STEP, silentAudio, 0);
   }
   clearEndScreen(state);
   return { screen: SCREEN_PLAY, best: null };
-}
-
-/**
- * A staged scene is a photograph, not a playthrough: if the autopilot got
- * busted or wasted during staging, the frame must still show the scene.
- */
-function clearEndScreen(state) {
-  state.endScreen = null;
-  state.bustTimer = 0;
 }

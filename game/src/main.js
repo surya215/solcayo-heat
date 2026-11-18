@@ -5,7 +5,7 @@
 // stages that scene instead of running the loop, paints it twice and sets
 // window.__shotReady for a screenshot.
 import { STEP, VIEW } from './config.js';
-import { createWorld, stepWorld, saveGame, missionApi } from './world.js';
+import { createWorld, stepWorld, missionApi } from './world.js';
 import { createInput } from './input.js';
 import { createRenderer, SCREEN_TITLE, SCREEN_PLAY, SCREEN_PAUSED } from './render.js';
 import { createAudio } from './audio.js';
@@ -29,6 +29,7 @@ function bestSummary() {
   return { completedMissions: world.completedMissions, money: world.money, stats: world.stats };
 }
 
+// A staged screenshot: paint the scene twice, then signal readiness.
 function runShot(name) {
   const scene = stageShot(name, world, stepWorld);
   let painted = 0;
@@ -46,7 +47,7 @@ function runGame() {
   let screen = SCREEN_TITLE;
   let last = performance.now();
   let accumulator = 0;
-  const MAX_FRAME = 0.25;
+  const MAX_FRAME = 0.25; // a long frame never advances more than this
 
   function announce(message) {
     status.textContent = message;

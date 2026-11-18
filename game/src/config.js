@@ -1,10 +1,10 @@
-// Solcayo Heat — every tuning number and colour in one place.
-// The island city of Solcayo is a fixed 2560x1920 world; the renderer shows a
-// 1280x720 window of it through a camera that follows the player, so no rule
-// below depends on the screen size.
+// Solcayo Heat — one place for every number the game tunes by.
+// The island is a fixed 2560x1920 world. The camera shows a 1280x720
+// window of it and follows the player, so no rule here depends on the
+// size of the browser window.
 export const WORLD = { width: 2560, height: 1920 };
 export const VIEW = { width: 1280, height: 720 };
-export const STEP = 1 / 60;
+export const STEP = 1 / 60; // fixed simulation step, seconds
 
 export const PLAYER = {
   radius: 13,
@@ -29,20 +29,39 @@ export const CAR = {
   health: 100,
 };
 
-export const TRAFFIC = { cars: 14, speedMin: 95, speedMax: 150, spawnRadius: 900, despawnRadius: 1200 };
+// How many cars and walkers the city keeps around the player.
+export const TRAFFIC = {
+  cars: 14,
+  speedMin: 95,
+  speedMax: 150,
+  spawnRadius: 900,
+  despawnRadius: 1200,
+};
 export const PEDS = { count: 26, walkMin: 45, walkMax: 80, fleeSpeed: 190 };
 
 export const WANTED = {
   max: 5,
-  decaySeconds: 14,
+  decaySeconds: 14, // quiet seconds before one star fades
   copCarsPerStar: 1,
   maxCopCars: 6,
-  bustSeconds: 1.6,
+  bustSeconds: 1.6, // a cop beside a slow player arrests them after this long
 };
 
-export const BULLET = { speed: 950, range: 520, damage: 34, enemyDamage: 9, fireDelay: 0.22 };
+export const BULLET = {
+  speed: 950,
+  range: 520,
+  damage: 34,
+  enemyDamage: 9,
+  fireDelay: 0.22,
+};
 
-export const PRICES = { repair: 120, clearWanted: 150, ammoBox: 80, armor: 100, heal: 60 };
+export const PRICES = {
+  repair: 120,
+  clearWanted: 150,
+  ammoBox: 80,
+  armor: 100,
+  heal: 60,
+};
 
 export const PALETTE = {
   ocean: '#1e7fa8',

@@ -1,35 +1,55 @@
-// All sound is synthesized with WebAudio — no audio files. Engine hum, sirens,
-// gunshots, pickups and a laid-back sunset bassline are built from oscillators
-// and filtered noise. Audio only starts after the player's first gesture.
+// Every sound is synthesized with WebAudio — no audio files. A sawtooth
+// engine hum, a two-tone siren, gunshots from filtered noise, pickup chimes
+// and a slow sunset bassline. Nothing plays until the player's first
+// gesture unlocks the audio context.
 export function createAudio() {
   const api = { muted: false, ready: false, ctx: null };
   let engineOsc = null;
   let engineGain = null;
-  let musicTimer = null;
   let sirenOsc = null;
   let sirenGain = null;
+  let musicTimer = null;
 
-  function ensure() {
-    if (api.ctx) return true;
-    try {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return false;
-      api.ctx = new Ctx();
-      api.ready = true;
-      startEngine();
-      startMusic();
-      return true;
-    } catch {
-      return false;
-    }
+  // A short decaying oscillator note.
+  function note(freq, dur, vol, type = 'sine', when = 0) {
+    const t = api.ctx.currentTime + when;
+    const osc = api.ctx.createOscillator();
+    const g = api.ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    osc.connect(g);
+    g.connect(api.ctx.destination);
+    osc.start(t);
+    osc.stop(t + dur + 0.02);
   }
 
-  function startEngine() {
+  // A burst of filtered noise that fades out.
+  function burst(dur, vol, cutoff) {
+    const len = Math.floor(api.ctx.sampleRate * dur);
+    const buf = api.ctx.createBuffer(1, len, api.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = api.ctx.createBufferSource();
+    src.buffer = buf;
+    const filter = api.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = cutoff;
+    const g = api.ctx.createGain();
+    g.gain.value = vol;
+    src.connect(filter);
+    filter.connect(g);
+    g.connect(api.ctx.destination);
+    src.start();
+  }
+
+  function startEngineLoop() {
     engineOsc = api.ctx.createOscillator();
     engineGain = api.ctx.createGain();
+    const filter = api.ctx.createBiquadFilter();
     engineOsc.type = 'sawtooth';
     engineOsc.frequency.value = 50;
-    const filter = api.ctx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = 320;
     engineGain.gain.value = 0;
@@ -39,8 +59,9 @@ export function createAudio() {
     engineOsc.start();
   }
 
-  function startMusic() {
-    // A slow Am–F–C–G bassline with a soft pluck on top, one bar every 2 s.
+  function startMusicLoop() {
+    // One bar every 2 s: a low root, then a soft plucked chord on top.
+    // Am – F – C – G, a laid-back sunset bassline.
     const roots = [110, 87.31, 130.81, 98];
     let bar = 0;
     musicTimer = setInterval(() => {
@@ -48,60 +69,31 @@ export function createAudio() {
       const t = api.ctx.currentTime;
       const root = roots[bar % roots.length];
       bar += 1;
-      pluck(root / 2, t, 1.8, 0.05);
-      pluck(root, t + 0.5, 0.5, 0.04);
-      pluck(root * 1.5, t + 1.0, 0.5, 0.035);
-      pluck(root * 2, t + 1.5, 0.4, 0.03);
+      note(root / 2, 1.8, 0.05, 'triangle', 0);
+      note(root, 0.5, 0.04, 'triangle', 0.5);
+      note(root * 1.5, 0.5, 0.035, 'triangle', 1.0);
+      note(root * 2, 0.4, 0.03, 'triangle', 1.5);
     }, 2000);
     void musicTimer;
   }
 
-  function pluck(freq, t, dur, vol) {
-    const osc = api.ctx.createOscillator();
-    const g = api.ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.value = freq;
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    osc.connect(g);
-    g.connect(api.ctx.destination);
-    osc.start(t);
-    osc.stop(t + dur + 0.05);
-  }
-
-  function noiseBurst(dur, vol, freq) {
-    const len = Math.floor(api.ctx.sampleRate * dur);
-    const buf = api.ctx.createBuffer(1, len, api.ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < len; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
-    const src = api.ctx.createBufferSource();
-    src.buffer = buf;
-    const filter = api.ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = freq;
-    const g = api.ctx.createGain();
-    g.gain.value = vol;
-    src.connect(filter);
-    filter.connect(g);
-    g.connect(api.ctx.destination);
-    src.start();
-  }
-
-  function tone(freq, dur, vol, type = 'sine') {
-    const osc = api.ctx.createOscillator();
-    const g = api.ctx.createGain();
-    osc.type = type;
-    osc.frequency.value = freq;
-    g.gain.setValueAtTime(vol, api.ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, api.ctx.currentTime + dur);
-    osc.connect(g);
-    g.connect(api.ctx.destination);
-    osc.start();
-    osc.stop(api.ctx.currentTime + dur + 0.02);
+  function startContext() {
+    if (api.ctx) return true;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return false;
+      api.ctx = new Ctx();
+      api.ready = true;
+      startEngineLoop();
+      startMusicLoop();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   api.unlock = function unlock() {
-    if (ensure() && api.ctx.state === 'suspended') api.ctx.resume().catch(() => {});
+    if (startContext() && api.ctx.state === 'suspended') api.ctx.resume().catch(() => {});
   };
 
   api.setEngine = function setEngine(speedNorm, driving) {
@@ -117,6 +109,7 @@ export function createAudio() {
       sirenOsc = api.ctx.createOscillator();
       sirenGain = api.ctx.createGain();
       sirenOsc.type = 'triangle';
+      sirenOsc.frequency.value = 760;
       sirenGain.gain.value = api.muted ? 0 : 0.02;
       sirenOsc.connect(sirenGain);
       sirenGain.connect(api.ctx.destination);
@@ -127,7 +120,6 @@ export function createAudio() {
       lfoGain.gain.value = 220;
       lfo.connect(lfoGain);
       lfoGain.connect(sirenOsc.frequency);
-      sirenOsc.frequency.value = 760;
       lfo.start();
       sirenOsc._lfo = lfo;
     } else if (!on && sirenOsc) {
@@ -138,29 +130,29 @@ export function createAudio() {
 
   api.shot = function shot() {
     if (!api.ctx || api.muted) return;
-    noiseBurst(0.12, 0.25, 1800);
-    tone(180, 0.08, 0.12, 'square');
+    burst(0.12, 0.25, 1800);
+    note(180, 0.08, 0.12, 'square');
   };
   api.enemyShot = function enemyShot() {
     if (!api.ctx || api.muted) return;
-    noiseBurst(0.1, 0.1, 1200);
+    burst(0.1, 0.1, 1200);
   };
   api.crash = function crash() {
     if (!api.ctx || api.muted) return;
-    noiseBurst(0.25, 0.3, 500);
+    burst(0.25, 0.3, 500);
   };
   api.pickup = function pickup() {
     if (!api.ctx || api.muted) return;
-    tone(660, 0.1, 0.12);
-    setTimeout(() => tone(990, 0.14, 0.12), 70);
+    note(660, 0.1, 0.12);
+    setTimeout(() => note(990, 0.14, 0.12), 70);
   };
   api.mission = function mission() {
     if (!api.ctx || api.muted) return;
-    [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, 0.22, 0.14), i * 110));
+    [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => note(f, 0.22, 0.14), i * 110));
   };
   api.busted = function busted() {
     if (!api.ctx || api.muted) return;
-    [392, 330, 262].forEach((f, i) => setTimeout(() => tone(f, 0.3, 0.14, 'triangle'), i * 180));
+    [392, 330, 262].forEach((f, i) => setTimeout(() => note(f, 0.3, 0.14, 'triangle'), i * 180));
   };
   api.toggleMute = function toggleMute() {
     api.muted = !api.muted;
